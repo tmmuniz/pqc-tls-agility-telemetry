@@ -158,10 +158,12 @@ The telemetry process includes:
 - Infrastructure metrics collection
 - Generation of structured telemetry in JSON format
 
-Sample telemetry outputs can be found in the `YYYY` directory.
+After executing the TLS tests and collecting metrics, the final telemetry data is generated in JSON format.<br>
+A separate script reads the telemetry JSON file and generates a human-friendly HTML report.
 
-###
-The final report is present after some tests
+<br>
+<center><img src="img/metric_nist.png" alt="Diagram"></center>
+<br>
 
 ## Thresholds and Platform Responses
 
