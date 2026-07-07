@@ -16,17 +16,15 @@ The project includes automated pipelines that orchestrate the entire workflow, i
 
 # Architecture Overview
 
-## Infrastructure
-
 The solution consists of the following components:
 
 - **Device:** Amazon EC2 instance
 - **Monitoring Service:** Amazon CloudWatch
 - **Agent:** GitHub Actions Runner executing Python scripts
 
-Figure
-
-### Workflow
+<br>
+<center><img src="img/PQC3.drawio.png" alt="Diagram"></center>
+<br>
 
 - The EC2 instance runs the application inside Docker containers.
 - Amazon CloudWatch collects logs and infrastructure metrics.
@@ -34,7 +32,7 @@ Figure
 
 ---
 
-# Infrastructure as Code
+## Infrastructure as Code
 
 The Terraform code provisions the complete infrastructure, including:
 
@@ -47,7 +45,7 @@ The Terraform code provisions the complete infrastructure, including:
 
 ---
 
-# Containerization
+## Containerization
 
 The Docker image starts **three independent service instances**, each exposing a different TLS configuration to demonstrate the **crypto-agility** concept.
 
@@ -98,7 +96,7 @@ This configuration determines how secure connections are established between the
 
 ---
 
-# Policy as Code
+## Policy as Code
 
 Security policies are implemented using **Open Policy Agent (OPA)** and **Rego**.
 
@@ -113,7 +111,7 @@ This approach ensures that only configurations compliant with the project's secu
 
 ---
 
-# Telemetry
+## Telemetry
 
 Python scripts perform automated TLS validation and telemetry collection.
 
@@ -134,7 +132,7 @@ Sample telemetry outputs can be found in the `YYYY` directory.
 ###
 The final report is present after some tests
 
-# Thresholds and Platform Responses
+## Thresholds and Platform Responses
 
 The following table presents example thresholds and the corresponding platform responses.
 These checks are performed based on telemetry collected from the running application.
