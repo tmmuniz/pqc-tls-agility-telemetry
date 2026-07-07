@@ -113,7 +113,38 @@ This approach ensures that only configurations compliant with the project's secu
 
 ## Telemetry
 
-Python scripts perform automated TLS validation and telemetry collection.
+Python scripts perform automated TLS validation and telemetry collection.<br>
+The application responds to HTTPS requests with structured JSON containing device, client, TLS, PQC, and certificate information.
+
+```json
+        "device": {
+          "name": "43ddb597ab3a",
+          "ip": "172.17.0.2"
+        },
+        "client": {
+          "ip": "172.17.0.1"
+        },
+        "tls": {
+          "version": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "group": "X25519MLKEM768",
+          "handshake_duration_ms": 10.5494,
+          "handshake_bytes": {
+            "read": 1569,
+            "written": 9653
+          },
+          "pqc": {
+            "pqc_group_used": true,
+            "pqc_signature": true
+          },
+          "certificate": {
+            "signature_algorithm": "rsa3072_mldsa44",
+            "public_key_algorithm": "rsa3072_mldsa44",
+            "public_key_bits": 128,
+            "days_to_expire": 364
+          }
+```
+
 
 The telemetry process includes:
 
@@ -198,5 +229,11 @@ EC2_KEY_PAIR_NAME=<existing-ec2-key-pair-name>
 - Replace the Python-based telemetry collector with a **Go implementation** to enable highly concurrent execution, improved performance, lower memory consumption, and a single portable executable with no external runtime dependencies.
 - Implement concurrent TLS validation to test hundreds or thousands of endpoints in parallel using Go's lightweight goroutines.
 - Develop a lightweight telemetry agent in Go for cross-platform deployment on Linux, Windows, and macOS.
+<br><br>
+## Author
+Taynan Mina Muniz - Information Security Specialist (MSc)
+* LinkedIn: https://www.linkedin.com/in/tmmuniz
+* GitHub: https://github.com/tmmuniz
+
 
 
