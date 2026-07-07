@@ -1,4 +1,4 @@
-name: NIST Telemetry Collector
+name: 3 - Telemetry Collection and Report (Python)
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-name: Terraform EC2 CloudWatch Deploy
+name: 1 - Infrastructure Deployment (Terraform)
 
 on:
   workflow_dispatch:

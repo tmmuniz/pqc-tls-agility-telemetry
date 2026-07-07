@@ -1,4 +1,4 @@
-name: Build and Push PQC TLS Docker Image
+name: 2 - Check, Build and Push (Rego+Docker)
 
 on:
   workflow_dispatch:
