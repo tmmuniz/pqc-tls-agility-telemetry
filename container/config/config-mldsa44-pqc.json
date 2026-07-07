@@ -1,0 +1,22 @@
+{
+  "app": {
+    "listen_address": "0.0.0.0",
+    "listen_port": 8445,
+    "message": "MLDSA44 certificate with PQC-only TLS group",
+    "digest_algorithm": "SHA256",
+    "cipher_algorithm": "AES-256-GCM"
+  },
+  "tls": {
+    "certificate_file": "/app/certs/mldsa44/server.crt",
+    "private_key_file": "/app/certs/mldsa44/server.key",
+    "minimum_version": "TLSv1.3",
+    "maximum_version": "TLSv1.3",
+    "tls12_cipher_list": "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256",
+    "tls13_ciphersuites": "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256",
+    "groups": "MLKEM768",
+    "signature_algorithms": "mldsa44"
+  },
+  "logging": {
+    "log_file": "/app/logs/mldsa44-pqc.log"
+  }
+}

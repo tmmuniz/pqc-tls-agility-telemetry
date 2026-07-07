@@ -1,0 +1,26 @@
+build/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+*.o
+*.a
+*.so
+*.out
+tls_crypto_server
+
+.git/
+.github/
+logs/
+*.log
+server.crt
+server.key
+
+# Do not bake certificates or private keys into the image.
+certs/
+container/certs/
+*.pem
+*.p12
+*.pfx
+*.crt
+*.key
+infra/terraform/

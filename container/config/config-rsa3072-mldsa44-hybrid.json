@@ -1,0 +1,22 @@
+{
+  "app": {
+    "listen_address": "0.0.0.0",
+    "listen_port": 8444,
+    "message": "hybrid RSA3072_MLDSA44 certificate with hybrid TLS group",
+    "digest_algorithm": "SHA256",
+    "cipher_algorithm": "AES-256-GCM"
+  },
+  "tls": {
+    "certificate_file": "/app/certs/rsa3072_mldsa44/server.crt",
+    "private_key_file": "/app/certs/rsa3072_mldsa44/server.key",
+    "minimum_version": "TLSv1.3",
+    "maximum_version": "TLSv1.3",
+    "tls12_cipher_list": "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256",
+    "tls13_ciphersuites": "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256",
+    "groups": "X25519MLKEM768:X25519:P-256:P-384",
+    "signature_algorithms": "rsa3072_mldsa44:mldsa44:RSA-PSS+SHA256:RSA-PSS+SHA384"
+  },
+  "logging": {
+    "log_file": "/app/logs/rsa3072-mldsa44-hybrid.log"
+  }
+}

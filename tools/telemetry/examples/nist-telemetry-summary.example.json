@@ -1,0 +1,170 @@
+{
+  "metadata": {
+    "schema_version": "1.2",
+    "collector": "nist-pqc-tls-telemetry-collector",
+    "generated_at": "2026-07-06T19:30:00Z",
+    "aws_region": "us-east-1",
+    "target_host": "203.0.113.10",
+    "instance_id": "i-0123456789abcdef0",
+    "lookback_minutes": 15,
+    "collection_scope": "active_tls_tests_latest_cloudwatch_metrics_and_cloudwatch_logs"
+  },
+  "device": {
+    "instance_id": "i-0123456789abcdef0",
+    "public_ip": "203.0.113.10",
+    "private_ip": "10.42.1.109",
+    "instance_type": "t3.micro",
+    "tags": {
+      "deviceType": "QDevice"
+    },
+    "resolved_by": {
+      "tag_key": "deviceType",
+      "tag_value": "QDevice"
+    }
+  },
+  "active_tls_tests": {
+    "summary": {
+      "total_tests": 6,
+      "observed_success": 3,
+      "observed_failure": 3,
+      "expectation_matches": 6,
+      "expectation_mismatches": 0,
+      "expectation_match_percent": 100.0
+    },
+    "aggregated_metrics": {
+      "by_profile": {},
+      "by_test_group": {}
+    }
+  },
+  "cloudwatch_metrics": {
+    "region": "us-east-1",
+    "instance_id": "i-0123456789abcdef0",
+    "custom_namespace": "CWAgent",
+    "lookback_minutes": 15,
+    "collection_source": "cloudwatch_metrics_api",
+    "metric_policy": {
+      "mode": "latest_datapoint_only",
+      "cpu_source": "AWS/EC2",
+      "memory_source": "CWAgent",
+      "network_source": "AWS/EC2",
+      "logs_collected_by_metrics_collector": false
+    },
+    "metrics": {
+      "cpu_utilization_percent": {
+        "namespace": "AWS/EC2",
+        "metric_name": "CPUUtilization",
+        "value": 6.117,
+        "unit": "Percent",
+        "timestamp": "2026-07-06T19:29:00Z",
+        "datapoint_count": 1
+      },
+      "memory_used_percent": {
+        "namespace": "CWAgent",
+        "metric_name": "mem_used_percent",
+        "value": 42.8,
+        "unit": "Percent",
+        "timestamp": "2026-07-06T19:29:00Z",
+        "datapoint_count": 1,
+        "dimension_resolution": "expected_instance_id_only"
+      },
+      "network_in_bytes": {
+        "namespace": "AWS/EC2",
+        "metric_name": "NetworkIn",
+        "value": 2450000.0,
+        "unit": "Bytes",
+        "timestamp": "2026-07-06T19:29:00Z",
+        "datapoint_count": 1
+      },
+      "network_out_bytes": {
+        "namespace": "AWS/EC2",
+        "metric_name": "NetworkOut",
+        "value": 120120.0,
+        "unit": "Bytes",
+        "timestamp": "2026-07-06T19:29:00Z",
+        "datapoint_count": 1
+      }
+    }
+  },
+  "cloudwatch_logs": {
+    "region": "us-east-1",
+    "lookback_minutes": 15,
+    "collection_source": "cloudwatch_logs_api",
+    "log_groups": {
+      "/pqc-tls/rsa3072-classic": {
+        "exists": true,
+        "raw_event_count": 10,
+        "parsed_event_count": 10,
+        "truncated_by_limit": false
+      },
+      "/pqc-tls/rsa3072-mldsa44-hybrid": {
+        "exists": true,
+        "raw_event_count": 10,
+        "parsed_event_count": 10,
+        "truncated_by_limit": false
+      },
+      "/pqc-tls/mldsa44-pqc": {
+        "exists": true,
+        "raw_event_count": 10,
+        "parsed_event_count": 10,
+        "truncated_by_limit": false
+      }
+    },
+    "aggregated_metrics": {
+      "totals": {
+        "events": 30,
+        "success_events": 18,
+        "failure_events": 12,
+        "success_percent": 60.0,
+        "failure_percent": 40.0
+      },
+      "tls": {
+        "by_group": {
+          "X25519": 6,
+          "X25519MLKEM768": 6,
+          "MLKEM768": 6
+        },
+        "by_certificate_signature_algorithm": {
+          "sha256WithRSAEncryption": 6,
+          "rsa3072_mldsa44": 6,
+          "mldsa44": 6
+        },
+        "handshake_duration_ms": {
+          "count": 18,
+          "avg": 6.7,
+          "min": 3.1,
+          "max": 16.4,
+          "p50": 5.9,
+          "p95": 15.1
+        }
+      }
+    },
+    "parsed_event_sample": [],
+    "parsed_event_count": 30
+  },
+  "evidence": {
+    "active_tls_test_count": 6,
+    "cloudwatch_metric_names": [
+      "cpu_utilization_percent",
+      "memory_used_percent",
+      "network_in_bytes",
+      "network_out_bytes",
+      "network_packets_in",
+      "network_packets_out"
+    ],
+    "cloudwatch_metric_mode": "latest_datapoint_only",
+    "cloudwatch_logs_collected": true,
+    "cloudwatch_log_group_names": [
+      "/pqc-tls/mldsa44-pqc",
+      "/pqc-tls/rsa3072-classic",
+      "/pqc-tls/rsa3072-mldsa44-hybrid"
+    ],
+    "cloudwatch_log_parsed_event_count": 30,
+    "cloudwatch_data_sources": {
+      "cpu": "AWS/EC2 CloudWatch Metrics",
+      "memory": "CWAgent CloudWatch Metrics",
+      "network": "AWS/EC2 CloudWatch Metrics",
+      "application_logs": "CloudWatch Logs"
+    }
+  },
+  "findings": []
+}

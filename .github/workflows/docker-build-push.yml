@@ -1,0 +1,324 @@
+name: Build and Push PQC TLS Docker Image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+  DEVICE_TAG_KEY: deviceType
+  DEVICE_TAG_VALUE: QDevice
+
+jobs:
+  build-push-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install OPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L -o opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+          chmod +x opa
+          sudo mv opa /usr/local/bin/opa
+          opa version
+
+      - name: Policy-as-code crypto config validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/policy/validate_crypto_config.py \
+            --policy policy/rego/crypto_config.rego \
+            --report policy-results/crypto-config-policy-report.json \
+            app/config/config.json container/config/*.json
+
+      - name: Upload policy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crypto-config-policy-report
+          path: policy-results/crypto-config-policy-report.json
+          if-no-files-found: ignore
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          retry-max-attempts: 1
+
+      - name: Validate required GitHub variables
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_env=(
+            AWS_REGION
+            ECR_REPOSITORY
+            DEVICE_TAG_KEY
+            DEVICE_TAG_VALUE
+          )
+
+          for env_name in "${required_env[@]}"; do
+            if [ -z "${!env_name:-}" ]; then
+              echo "Missing required environment value: ${env_name}" >&2
+              exit 1
+            fi
+          done
+
+          if [ -z "${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}" ]; then
+            echo "Missing required GitHub variable: AWS_GITHUB_OIDC_ROLE_ARN" >&2
+            exit 1
+          fi
+
+      - name: Resolve AWS account and image URI
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          IMAGE_SHA="${REGISTRY}/${ECR_REPOSITORY}:sha-${GITHUB_SHA}"
+          IMAGE_LATEST="${REGISTRY}/${ECR_REPOSITORY}:latest"
+
+          echo "account_id=${ACCOUNT_ID}" >> "$GITHUB_OUTPUT"
+          echo "registry=${REGISTRY}" >> "$GITHUB_OUTPUT"
+          echo "image_sha=${IMAGE_SHA}" >> "$GITHUB_OUTPUT"
+          echo "image_latest=${IMAGE_LATEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate ECR repository exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws ecr describe-repositories --repository-names "${ECR_REPOSITORY}" >/dev/null 2>&1 || {
+            echo "ECR repository '${ECR_REPOSITORY}' does not exist." >&2
+            echo "Run the Terraform workflow first; the ECR repository is created by Terraform." >&2
+            exit 1
+          }
+
+      - name: Login to Amazon ECR
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login --username AWS --password-stdin "${{ steps.image.outputs.registry }}"
+
+      - name: Build Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            -f container/Dockerfile \
+            -t "${{ steps.image.outputs.image_sha }}" \
+            -t "${{ steps.image.outputs.image_latest }}" \
+            .
+
+      - name: Push Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "${{ steps.image.outputs.image_sha }}"
+          docker push "${{ steps.image.outputs.image_latest }}"
+
+      - name: Resolve EC2 target by device tag
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          aws ec2 describe-instances \
+            --filters \
+              "Name=tag:${DEVICE_TAG_KEY},Values=${DEVICE_TAG_VALUE}" \
+              "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[]' \
+            --output json > /tmp/ec2-targets.json
+
+          MATCH_COUNT="$(jq 'length' /tmp/ec2-targets.json)"
+          if [ "${MATCH_COUNT}" -eq 0 ]; then
+            echo "No running EC2 instance found with tag ${DEVICE_TAG_KEY}=${DEVICE_TAG_VALUE}." >&2
+            echo "Run the Terraform workflow first and confirm the EC2 tag exists." >&2
+            exit 1
+          fi
+
+          jq 'sort_by(.LaunchTime) | last' /tmp/ec2-targets.json > /tmp/ec2-target.json
+          INSTANCE_ID="$(jq -r '.InstanceId' /tmp/ec2-target.json)"
+          PUBLIC_IP="$(jq -r '.PublicIpAddress // empty' /tmp/ec2-target.json)"
+          INSTANCE_TYPE="$(jq -r '.InstanceType' /tmp/ec2-target.json)"
+
+          echo "instance_id=${INSTANCE_ID}" >> "$GITHUB_OUTPUT"
+          echo "public_ip=${PUBLIC_IP}" >> "$GITHUB_OUTPUT"
+          echo "instance_type=${INSTANCE_TYPE}" >> "$GITHUB_OUTPUT"
+          echo "Resolved EC2 instance ${INSTANCE_ID} by tag ${DEVICE_TAG_KEY}=${DEVICE_TAG_VALUE}."
+
+      - name: Wait for EC2 SSM availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          INSTANCE_ID="${{ steps.target.outputs.instance_id }}"
+
+          for attempt in $(seq 1 30); do
+            PING_STATUS="$(aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=${INSTANCE_ID}" \
+              --query 'InstanceInformationList[0].PingStatus' \
+              --output text 2>/dev/null || true)"
+
+            if [ "${PING_STATUS}" = "Online" ]; then
+              echo "SSM is online for ${INSTANCE_ID}."
+              exit 0
+            fi
+
+            echo "Waiting for SSM on ${INSTANCE_ID}. Current status: ${PING_STATUS:-not-registered}. Attempt ${attempt}/30."
+            sleep 10
+          done
+
+          echo "EC2 instance ${INSTANCE_ID} did not become available in SSM." >&2
+          exit 1
+
+      - name: Pull image and restart container on EC2 via SSM
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INSTANCE_ID="${{ steps.target.outputs.instance_id }}"
+          REGISTRY="${{ steps.image.outputs.registry }}"
+          IMAGE_URI="${{ steps.image.outputs.image_latest }}"
+
+          cat > /tmp/deploy-pqc-tls.sh <<'REMOTE_SCRIPT'
+          set -euo pipefail
+
+          echo "[deploy] Starting PQC TLS container deployment."
+          echo "[deploy] Region: __AWS_REGION__"
+          echo "[deploy] Registry: __REGISTRY__"
+          echo "[deploy] Image: __IMAGE_URI__"
+
+          command -v aws >/dev/null 2>&1 || { echo "aws CLI not found" >&2; exit 1; }
+          command -v docker >/dev/null 2>&1 || { echo "docker not found" >&2; exit 1; }
+
+          aws ecr get-login-password --region "__AWS_REGION__" \
+            | docker login --username AWS --password-stdin "__REGISTRY__"
+
+          docker pull "__IMAGE_URI__"
+
+          mkdir -p /opt/pqc-tls/logs
+          touch /opt/pqc-tls/logs/rsa3072-classic.log
+          touch /opt/pqc-tls/logs/rsa3072-mldsa44-hybrid.log
+          touch /opt/pqc-tls/logs/mldsa44-pqc.log
+          chown -R 10001:10001 /opt/pqc-tls/logs
+          chmod 750 /opt/pqc-tls/logs
+          chmod 640 /opt/pqc-tls/logs/*.log
+
+          docker rm -f pqc-tls >/dev/null 2>&1 || true
+
+          docker run -d \
+            --name pqc-tls \
+            -p 8443:8443 \
+            -p 8444:8444 \
+            -p 8445:8445 \
+            -v /opt/pqc-tls/logs:/app/logs:rw \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --restart unless-stopped \
+            "__IMAGE_URI__"
+
+          if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files amazon-cloudwatch-agent.service >/dev/null 2>&1; then
+            systemctl enable amazon-cloudwatch-agent || true
+            systemctl restart amazon-cloudwatch-agent || true
+            /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a status || true
+          fi
+
+          echo "[deploy] Container started."
+          docker ps --filter name=pqc-tls
+          docker logs --tail 80 pqc-tls
+          REMOTE_SCRIPT
+
+          sed -i "s#__AWS_REGION__#${AWS_REGION}#g" /tmp/deploy-pqc-tls.sh
+          sed -i "s#__REGISTRY__#${REGISTRY}#g" /tmp/deploy-pqc-tls.sh
+          sed -i "s#__IMAGE_URI__#${IMAGE_URI}#g" /tmp/deploy-pqc-tls.sh
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          script = Path('/tmp/deploy-pqc-tls.sh').read_text()
+          Path('/tmp/ssm-parameters.json').write_text(json.dumps({"commands": [script]}))
+          PY
+
+          COMMAND_ID="$(aws ssm send-command \
+            --instance-ids "${INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy PQC TLS container from GitHub Actions" \
+            --parameters file:///tmp/ssm-parameters.json \
+            --query 'Command.CommandId' \
+            --output text)"
+
+          echo "command_id=${COMMAND_ID}" >> "$GITHUB_OUTPUT"
+          echo "SSM command sent: ${COMMAND_ID}"
+
+          for attempt in $(seq 1 60); do
+            STATUS="$(aws ssm get-command-invocation \
+              --command-id "${COMMAND_ID}" \
+              --instance-id "${INSTANCE_ID}" \
+              --query 'Status' \
+              --output text 2>/dev/null || true)"
+
+            case "${STATUS}" in
+              Success)
+                echo "SSM deployment command succeeded."
+                aws ssm get-command-invocation \
+                  --command-id "${COMMAND_ID}" \
+                  --instance-id "${INSTANCE_ID}" \
+                  --query 'StandardOutputContent' \
+                  --output text
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut|Cancelling)
+                echo "SSM deployment command failed with status: ${STATUS}" >&2
+                echo "--- STDOUT ---" >&2
+                aws ssm get-command-invocation \
+                  --command-id "${COMMAND_ID}" \
+                  --instance-id "${INSTANCE_ID}" \
+                  --query 'StandardOutputContent' \
+                  --output text >&2 || true
+                echo "--- STDERR ---" >&2
+                aws ssm get-command-invocation \
+                  --command-id "${COMMAND_ID}" \
+                  --instance-id "${INSTANCE_ID}" \
+                  --query 'StandardErrorContent' \
+                  --output text >&2 || true
+                exit 1
+                ;;
+              *)
+                echo "Waiting for SSM command ${COMMAND_ID}. Current status: ${STATUS:-Pending}. Attempt ${attempt}/60."
+                sleep 5
+                ;;
+            esac
+          done
+
+          echo "Timed out waiting for SSM deployment command." >&2
+          exit 1
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "## Docker image built, pushed and deployed"
+            echo ""
+            echo "- SHA tag: \`${{ steps.image.outputs.image_sha }}\`"
+            echo "- Latest tag: \`${{ steps.image.outputs.image_latest }}\`"
+            echo "- EC2 instance: \`${{ steps.target.outputs.instance_id }}\`"
+            echo "- EC2 public IP: \`${{ steps.target.outputs.public_ip }}\`"
+            echo "- EC2 instance type: \`${{ steps.target.outputs.instance_type }}\`"
+            echo "- Discovery tag: \`${DEVICE_TAG_KEY}=${DEVICE_TAG_VALUE}\`"
+            echo "- SSM command: \`${{ steps.deploy.outputs.command_id }}\`"
+            echo ""
+            echo "The ECR repository is managed by Terraform."
+            echo "The Docker build was gated by OPA/Rego policy-as-code."
+            echo "The container was restarted on the EC2 instance through AWS Systems Manager Run Command."
+          } >> "$GITHUB_STEP_SUMMARY"

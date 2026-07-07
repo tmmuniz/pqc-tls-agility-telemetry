@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+set -euxo pipefail
+
+exec > >(tee /var/log/pqc-tls-bootstrap.log | logger -t user-data -s 2>/dev/console) 2>&1
+
+AWS_REGION="${aws_region}"
+LOG_BASE_PATH="/opt/pqc-tls/logs"
+
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg lsb-release unzip jq awscli snapd
+
+# Ensure AWS Systems Manager Agent is available for remote workflow commands.
+systemctl enable --now snapd || true
+snap install amazon-ssm-agent --classic || true
+systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service || systemctl enable --now amazon-ssm-agent || true
+
+# Install Docker Engine from Docker's official apt repository.
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  > /etc/apt/sources.list.d/docker.list
+
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+systemctl enable --now docker
+usermod -aG docker ubuntu || true
+
+# Directory used by the container as /app/logs.
+mkdir -p "$LOG_BASE_PATH"
+touch \
+  "$LOG_BASE_PATH/rsa3072-classic.log" \
+  "$LOG_BASE_PATH/rsa3072-mldsa44-hybrid.log" \
+  "$LOG_BASE_PATH/mldsa44-pqc.log"
+
+# The container process uses UID/GID 10001. The CloudWatch Agent runs as root and can read these files.
+chown -R 10001:10001 "$LOG_BASE_PATH"
+chmod 750 "$LOG_BASE_PATH"
+chmod 640 "$LOG_BASE_PATH"/*.log
+
+# Install the unified CloudWatch Agent on Ubuntu.
+curl -fsSL -o /tmp/amazon-cloudwatch-agent.deb \
+  "https://amazoncloudwatch-agent-$AWS_REGION.s3.$AWS_REGION.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb" \
+  || curl -fsSL -o /tmp/amazon-cloudwatch-agent.deb \
+  "https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb"
+
+dpkg -i /tmp/amazon-cloudwatch-agent.deb
+
+# CloudWatch Agent configuration:
+# - Keep the default metrics namespace (CWAgent) for memory.
+# - CPU and networking are collected by native EC2 metrics in AWS/EC2.
+# - Disk metrics are intentionally disabled.
+# - Application logs are collected from the fixed C++ log files and sent to CloudWatch Logs.
+# The heredoc is quoted so Bash does not expand CloudWatch Agent placeholders such as $${aws:InstanceId}.
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'CWAGENT'
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "force_flush_interval": 5,
+    "run_as_user": "root"
+  },
+  "metrics": {
+    "append_dimensions": {
+      "InstanceId": "$${aws:InstanceId}"
+    },
+    "metrics_collected": {
+      "mem": {
+        "measurement": [
+          "mem_used_percent"
+        ],
+        "metrics_collection_interval": 60
+      }
+    }
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/opt/pqc-tls/logs/rsa3072-classic.log",
+            "log_group_name": "/pqc-tls/rsa3072-classic",
+            "log_stream_name": "{instance_id}/rsa3072-classic",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/opt/pqc-tls/logs/rsa3072-mldsa44-hybrid.log",
+            "log_group_name": "/pqc-tls/rsa3072-mldsa44-hybrid",
+            "log_stream_name": "{instance_id}/rsa3072-mldsa44-hybrid",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/opt/pqc-tls/logs/mldsa44-pqc.log",
+            "log_group_name": "/pqc-tls/mldsa44-pqc",
+            "log_stream_name": "{instance_id}/mldsa44-pqc",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/log/pqc-tls-bootstrap.log",
+            "log_group_name": "/pqc-tls/bootstrap",
+            "log_stream_name": "{instance_id}/bootstrap",
+            "timezone": "UTC"
+          }
+        ]
+      }
+    }
+  }
+}
+CWAGENT
+
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config \
+  -m ec2 \
+  -s \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
+systemctl enable amazon-cloudwatch-agent
+systemctl restart amazon-cloudwatch-agent

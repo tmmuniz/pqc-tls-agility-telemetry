@@ -1,0 +1,141 @@
+name: Terraform EC2 CloudWatch Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Choose the Terraform action to execute"
+        required: true
+        default: "apply"
+        type: choice
+        options:
+          - apply
+          - destroy
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+  TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+  TF_STATE_KEY: ${{ secrets.TF_STATE_KEY }}
+
+  TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+  TF_VAR_ecr_repository_name: ${{ vars.ECR_REPOSITORY }}
+  TF_VAR_ssh_key_name: ${{ secrets.EC2_KEY_PAIR_NAME }}
+  TF_VAR_ssh_allowed_cidr: ${{ vars.SSH_ALLOWED_CIDR }}
+  TF_VAR_tls_allowed_cidr: ${{ vars.TLS_ALLOWED_CIDR }}
+
+concurrency:
+  group: terraform-pqc-tls-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    name: Terraform ${{ inputs.action }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Validate required GitHub variables and secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_values=(
+            AWS_REGION
+            ECR_REPOSITORY
+            TF_STATE_BUCKET
+            TF_STATE_KEY
+            TF_VAR_ssh_key_name
+            TF_VAR_ssh_allowed_cidr
+            TF_VAR_tls_allowed_cidr
+          )
+
+          for value_name in "${required_values[@]}"; do
+            if [ -z "${!value_name:-}" ]; then
+              echo "Missing required GitHub variable, secret, or environment value: ${value_name}" >&2
+              exit 1
+            fi
+          done
+
+          if [ -z "${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}" ]; then
+            echo "Missing required GitHub variable: AWS_GITHUB_OIDC_ROLE_ARN" >&2
+            exit 1
+          fi
+
+      - name: Terraform fmt
+        shell: bash
+        run: terraform -chdir=infra/terraform fmt -recursive
+
+      - name: Terraform init
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra/terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform validate
+        shell: bash
+        run: terraform -chdir=infra/terraform validate
+
+      - name: Terraform plan for apply
+        if: inputs.action == 'apply'
+        shell: bash
+        run: |
+          set -uo pipefail
+          terraform -chdir=infra/terraform plan -detailed-exitcode -out=tfplan
+          plan_exit_code=$?
+
+          if [ "$plan_exit_code" -eq 1 ]; then
+            echo "terraform plan failed. Stopping apply." >&2
+            exit 1
+          fi
+
+          if [ "$plan_exit_code" -eq 0 ]; then
+            echo "terraform plan completed successfully: no changes."
+          elif [ "$plan_exit_code" -eq 2 ]; then
+            echo "terraform plan completed successfully: changes detected."
+          else
+            echo "Unexpected terraform plan exit code: ${plan_exit_code}" >&2
+            exit "$plan_exit_code"
+          fi
+
+      - name: Terraform apply
+        if: inputs.action == 'apply'
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra/terraform apply -auto-approve tfplan
+
+      - name: Terraform plan for destroy
+        if: inputs.action == 'destroy'
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra/terraform plan -destroy -out=tfplan-destroy
+
+      - name: Terraform destroy
+        if: inputs.action == 'destroy'
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra/terraform apply -auto-approve tfplan-destroy

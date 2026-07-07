@@ -1,0 +1,281 @@
+name: NIST Telemetry Collector
+
+on:
+  workflow_dispatch:
+    inputs:
+      lookback_minutes:
+        description: "Maximum CloudWatch search window in minutes; metrics use latest datapoint and logs are filtered by this window"
+        required: true
+        default: "15"
+      remote_tls_use_oqs_docker:
+        description: "Run active TLS tests on the EC2 instance using openquantumsafe/oqs-ossl3 with host networking"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: nist-telemetry-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  DEVICE_TAG_KEY: deviceType
+  DEVICE_TAG_VALUE: QDevice
+  OQS_IMAGE: openquantumsafe/oqs-ossl3:latest-x86_64
+
+jobs:
+  collect-telemetry:
+    name: Collect NIST telemetry
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          retry-max-attempts: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Validate required values
+        shell: bash
+        run: |
+          set -euo pipefail
+          required_values=(AWS_REGION DEVICE_TAG_KEY DEVICE_TAG_VALUE)
+          for value_name in "${required_values[@]}"; do
+            if [ -z "${!value_name:-}" ]; then
+              echo "Missing required value: ${value_name}" >&2
+              exit 1
+            fi
+          done
+
+          if [ -z "${{ vars.AWS_GITHUB_OIDC_ROLE_ARN }}" ]; then
+            echo "Missing required GitHub variable: AWS_GITHUB_OIDC_ROLE_ARN" >&2
+            exit 1
+          fi
+
+      - name: Resolve EC2 target by device tag
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          aws ec2 describe-instances \
+            --filters \
+              "Name=tag:${DEVICE_TAG_KEY},Values=${DEVICE_TAG_VALUE}" \
+              "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[]' \
+            --output json > /tmp/ec2-targets.json
+
+          MATCH_COUNT="$(jq 'length' /tmp/ec2-targets.json)"
+          if [ "${MATCH_COUNT}" -eq 0 ]; then
+            echo "No running EC2 instance found with tag ${DEVICE_TAG_KEY}=${DEVICE_TAG_VALUE}." >&2
+            echo "Run the Terraform workflow first and confirm the EC2 tag exists." >&2
+            exit 1
+          fi
+
+          jq 'sort_by(.LaunchTime) | last' /tmp/ec2-targets.json > /tmp/ec2-target.json
+          INSTANCE_ID="$(jq -r '.InstanceId' /tmp/ec2-target.json)"
+          PUBLIC_IP="$(jq -r '.PublicIpAddress // empty' /tmp/ec2-target.json)"
+          PRIVATE_IP="$(jq -r '.PrivateIpAddress // empty' /tmp/ec2-target.json)"
+          INSTANCE_TYPE="$(jq -r '.InstanceType' /tmp/ec2-target.json)"
+
+          echo "instance_id=${INSTANCE_ID}" >> "$GITHUB_OUTPUT"
+          echo "public_ip=${PUBLIC_IP}" >> "$GITHUB_OUTPUT"
+          echo "private_ip=${PRIVATE_IP}" >> "$GITHUB_OUTPUT"
+          echo "instance_type=${INSTANCE_TYPE}" >> "$GITHUB_OUTPUT"
+          echo "Resolved EC2 instance ${INSTANCE_ID} by tag ${DEVICE_TAG_KEY}=${DEVICE_TAG_VALUE}."
+
+      - name: Install Python dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r tools/telemetry/requirements.txt
+
+      - name: Package telemetry TLS test code
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p telemetry-output
+          tar -czf telemetry-output/telemetry-remote.tgz -C tools/telemetry telemetry
+          base64 -w0 telemetry-output/telemetry-remote.tgz > telemetry-output/telemetry-remote.tgz.b64
+
+      - name: Run active TLS tests inside EC2 via SSM
+        id: remote_tls
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INSTANCE_ID="${{ steps.target.outputs.instance_id }}"
+          TELEMETRY_TGZ_B64="$(cat telemetry-output/telemetry-remote.tgz.b64)"
+          USE_OQS_DOCKER="${{ inputs.remote_tls_use_oqs_docker }}"
+
+          cat > ssm-command.sh <<EOF
+          set -euo pipefail
+
+          WORK_DIR="/tmp/nist-telemetry-remote"
+          rm -rf "\${WORK_DIR}"
+          mkdir -p "\${WORK_DIR}"
+
+          cat > "\${WORK_DIR}/telemetry-remote.tgz.b64" <<'B64'
+          ${TELEMETRY_TGZ_B64}
+          B64
+
+          base64 -d "\${WORK_DIR}/telemetry-remote.tgz.b64" > "\${WORK_DIR}/telemetry-remote.tgz"
+          tar -xzf "\${WORK_DIR}/telemetry-remote.tgz" -C "\${WORK_DIR}"
+
+          cd "\${WORK_DIR}"
+
+          if [ "${USE_OQS_DOCKER}" = "true" ]; then
+            docker pull "${OQS_IMAGE}"
+            python3 -m telemetry.tls_tests \
+              --target-host 127.0.0.1 \
+              --use-oqs-docker \
+              --oqs-image "${OQS_IMAGE}" \
+              --docker-network host \
+              --execution-location ec2_ssm \
+              --timeout-seconds 25 \
+              --output "\${WORK_DIR}/active-tls-tests.json"
+          else
+            python3 -m telemetry.tls_tests \
+              --target-host 127.0.0.1 \
+              --execution-location ec2_ssm \
+              --timeout-seconds 25 \
+              --output "\${WORK_DIR}/active-tls-tests.json"
+          fi
+
+          echo "__NIST_ACTIVE_TLS_TESTS_B64_BEGIN__"
+          gzip -c "\${WORK_DIR}/active-tls-tests.json" | base64 -w0
+          echo
+          echo "__NIST_ACTIVE_TLS_TESTS_B64_END__"
+          EOF
+
+          jq -n \
+            --arg iid "${INSTANCE_ID}" \
+            --rawfile script ssm-command.sh \
+            '{
+              DocumentName: "AWS-RunShellScript",
+              InstanceIds: [$iid],
+              Comment: "Run PQC TLS active tests locally on EC2 for NIST telemetry collection",
+              Parameters: { commands: [$script] }
+            }' > ssm-command.json
+
+          COMMAND_ID="$(aws ssm send-command --cli-input-json file://ssm-command.json --query 'Command.CommandId' --output text)"
+          echo "command_id=${COMMAND_ID}" >> "$GITHUB_OUTPUT"
+
+          for attempt in $(seq 1 60); do
+            STATUS="$(aws ssm get-command-invocation \
+              --command-id "${COMMAND_ID}" \
+              --instance-id "${INSTANCE_ID}" \
+              --query 'Status' \
+              --output text 2>/dev/null || true)"
+
+            case "${STATUS}" in
+              Success|Failed|Cancelled|TimedOut)
+                break
+                ;;
+              *)
+                sleep 5
+                ;;
+            esac
+          done
+
+          aws ssm get-command-invocation \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${INSTANCE_ID}" \
+            --query 'StandardOutputContent' \
+            --output text > telemetry-output/ssm-active-tls-stdout.txt
+
+          aws ssm get-command-invocation \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${INSTANCE_ID}" \
+            --query 'StandardErrorContent' \
+            --output text > telemetry-output/ssm-active-tls-stderr.txt
+
+          FINAL_STATUS="$(aws ssm get-command-invocation \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${INSTANCE_ID}" \
+            --query 'Status' \
+            --output text)"
+
+          if [ "${FINAL_STATUS}" != "Success" ]; then
+            echo "SSM command failed with status: ${FINAL_STATUS}" >&2
+            cat telemetry-output/ssm-active-tls-stdout.txt >&2 || true
+            cat telemetry-output/ssm-active-tls-stderr.txt >&2 || true
+            exit 1
+          fi
+
+          awk '/__NIST_ACTIVE_TLS_TESTS_B64_BEGIN__/{flag=1;next}/__NIST_ACTIVE_TLS_TESTS_B64_END__/{flag=0}flag' \
+            telemetry-output/ssm-active-tls-stdout.txt > telemetry-output/active-tls-tests.json.gz.b64
+
+          if [ ! -s telemetry-output/active-tls-tests.json.gz.b64 ]; then
+            echo "Could not extract active TLS test payload from SSM output." >&2
+            cat telemetry-output/ssm-active-tls-stdout.txt >&2 || true
+            exit 1
+          fi
+
+          base64 -d telemetry-output/active-tls-tests.json.gz.b64 | gzip -d > telemetry-output/active-tls-tests.json
+          python -m json.tool telemetry-output/active-tls-tests.json >/dev/null
+
+      - name: Wait for CloudWatch ingestion
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Waiting for CloudWatch Agent and CloudWatch Logs ingestion..."
+          sleep 90
+
+      - name: Run NIST telemetry collector
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python tools/telemetry/nist_telemetry_collector.py \
+            --region "${AWS_REGION}" \
+            --device-tag-key "${DEVICE_TAG_KEY}" \
+            --device-tag-value "${DEVICE_TAG_VALUE}" \
+            --lookback-minutes "${{ inputs.lookback_minutes }}" \
+            --active-tests-input telemetry-output/active-tls-tests.json \
+            --output telemetry-output/nist-telemetry-summary.json
+
+      - name: Upload telemetry artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nist-telemetry-summary
+          path: |
+            telemetry-output/nist-telemetry-summary.json
+            telemetry-output/active-tls-tests.json
+            telemetry-output/ssm-active-tls-stdout.txt
+            telemetry-output/ssm-active-tls-stderr.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "## NIST telemetry collection completed"
+            echo ""
+            echo "- Active TLS tests executed on EC2 via SSM against: \`127.0.0.1\`"
+            echo "- EC2 instance discovered by tag: \`${DEVICE_TAG_KEY}=${DEVICE_TAG_VALUE}\`"
+            echo "- EC2 instance: \`${{ steps.target.outputs.instance_id }}\`"
+            echo "- EC2 instance type: \`${{ steps.target.outputs.instance_type }}\`"
+            echo "- EC2 public IP used only as metadata: \`${{ steps.target.outputs.public_ip }}\`"
+            echo "- Metric mode: latest datapoint only"
+            echo "- Metrics collected from CloudWatch: CPU, memory and networking"
+            echo "- Disk metrics: disabled"
+            echo "- CloudWatch Logs collection: enabled for C++ application JSON logs"
+            echo "- Lookback minutes: \`${{ inputs.lookback_minutes }}\`"
+            echo "- Artifact: \`nist-telemetry-summary\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,40 @@
+{
+  "metadata": {
+    "schema_version": "1.0",
+    "tool": "opa-rego-crypto-config-policy",
+    "generated_at": "2026-07-06T18:00:00+00:00",
+    "policy_file": "policy/rego/crypto_config.rego"
+  },
+  "summary": {
+    "status": "fail",
+    "validated_files": 4,
+    "finding_count": 2
+  },
+  "files": {
+    "config.json": {
+      "status": "fail",
+      "finding_count": 2,
+      "findings": [
+        {
+          "file": "config.json",
+          "severity": "high",
+          "field": "app.digest_algorithm",
+          "value": "sha1",
+          "rule_id": "weak_or_obsolete_digest_algorithm",
+          "message": "Digest algorithm \"sha1\" is weak or obsolete.",
+          "recommendation": "Use SHA256, SHA384, SHA512, SHA3-256, SHA3-384 or SHA3-512."
+        },
+        {
+          "file": "config.json",
+          "severity": "critical",
+          "field": "tls.minimum_version",
+          "value": "tlsv1.1",
+          "rule_id": "weak_or_obsolete_tls_version",
+          "message": "TLS version \"tlsv1.1\" is obsolete and must not be configured.",
+          "recommendation": "Use TLSv1.2 as the minimum legacy-compatible baseline or TLSv1.3 for this PQC lab."
+        }
+      ]
+    }
+  },
+  "findings": []
+}
