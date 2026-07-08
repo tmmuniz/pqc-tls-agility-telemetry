@@ -165,6 +165,11 @@ A separate script reads the telemetry JSON file and generates a human-friendly H
 <center><img src="img/metric_nist.png" alt="Diagram"></center>
 <br>
 
+<br>
+<center><img src="img/metric_pqc.png" alt="Diagram"></center>
+<br>
+
+
 ## Thresholds and Platform Responses
 
 The following table presents example thresholds and the corresponding platform responses.
