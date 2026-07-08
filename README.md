@@ -170,20 +170,20 @@ A separate script reads the telemetry JSON file and generates a human-friendly H
 The following table presents example thresholds and the corresponding platform responses.
 These checks are performed based on telemetry collected from the running application.
 
-| Threshold | Problem | Platform Response |
-|-----------|---------|-------------------|
-| CPU > 80% | Overload | Alert |
-| Memory > 80% | Overload | Alert |
-| Error rate > 30% | Overload / Compromised | Alert |
-| p95 handshake duration > 100 ms | Overload | Alert |
-| Certificate expiration < 30 days | Unavailability | Alert |
-| Missing telemetry data for 2 consecutive runs | Unavailability | Alert + Force Restart |
-| Application unreachable | Unavailability | Alert + Force Restart |
-| Weak algorithms detected | Compromised | Alert + Block traffic to the application |
-| TLS version below TLS 1.2 detected | Compromised | Alert + Block traffic to the application |
-| Non-approved cipher suite detected | Compromised | Alert + Block traffic to the application |
-| Same source generates > 100 TLS failures within 5 minutes | DoS/DDoS | Alert + Block the source |
-| Same source generates > 100 requests within 1 minute | DoS/DDoS | Alert + Block the source |
+| Layer | Metric / Signal (What we collect) | Threshold (What Bad looks like) | Problem | Platform Response (What we alert/act on) | Evidence Retention (What we keep for evidence) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **L1** | CPU Utilization | `> 80%` | Resource Exhaustion (PQC Math Stress) | Alert | 5-min OS process snapshot + CPU metrics log |
+| **L1** | Memory Utilization | `> 80%` | Memory Leak / Buffer Overflow Risk | Alert | Heap memory allocation logs |
+| **L2** | Handshake Error Rate | `> 30%` | Network Degradation / Malformed Packets | Alert | Edge packet capture (PCAP) snippet |
+| **L2** | p95 Handshake Duration | `> 100 ms` | Network Overload / Fragmentation (PQC Keys) | Alert | Network latency metrics + TCP window logs |
+| **L3** | Certificate Validity | `< 30 days` | Impending Unavailability | Alert | Certificate metadata and chain log |
+| **L3** | Agent Keep-Alive | Missing for 2 consecutive runs | Subsystem / Collector Failure | Alert + Force Restart | Collector daemon error logs & systemd dump |
+| **L3** | Application Status | Unreachable | Appliance Outage | Alert + Force Restart | Core dump file + Last 100 application events |
+| **L3** | Cryptographic Agility / KEM | Weak / Legacy algorithms detected | Cryptographic Compromise | Alert + Block traffic to the application | Active configuration JSON + Handshake metadata |
+| **L3** | Protocol Compliance | TLS version below TLS 1.3 detected | Downgrade Attack (NIST Non-Compliance) | Alert + Block traffic to the application | Complete TLS ClientHello/ServerHello payload |
+| **L3** | Cipher Suite Compliance | Non-approved cipher suite detected | Policy Violation / Broken Cipher | Alert + Block traffic to the application | Cryptographic session log (Session ID & Cipher) |
+| **L3** | TLS Failure Rate per Client | Same source generates `> 100` TLS failures within 5 min | DoS/DDoS via PQC Exhaustion | Alert + Block the source | Source IP, TLS error codes, and Firewall drop log |
+| **L2/L3**| Request Rate per Client | Same source generates `> 100` requests within 1 min | Rate Limit Breach / Application DoS | Alert + Block the source | Source IP traffic volume logs + Blocked events |
 
 # CI/CD Pipelines
 
