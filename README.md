@@ -21,14 +21,15 @@ The solution consists of the following components:
 - **Device:** Amazon EC2 instance
 - **Monitoring Service:** Amazon CloudWatch
 - **Agent:** GitHub Actions Runner executing Python scripts
+- **Admin:** The authorized user who can view data, check reports, and manage responses.
 
 <br>
 <center><img src="img/PQC3.drawio.png" alt="Diagram"></center>
 <br>
 
 - The EC2 instance runs the application inside Docker containers.
-- Amazon CloudWatch collects logs and infrastructure metrics.
-- Python scripts execute TLS validation tests, collect telemetry, and generate reports.
+- Amazon CloudWatch collects logs and infrastructure metrics from the EC2 instance.
+- Python scripts run TLS validation and tests directly on the device, collect telemetry through CloudWatch, and generate reports.
 
 ---
 
@@ -175,7 +176,7 @@ A separate script reads the telemetry JSON file and generates a human-friendly H
 The following table presents example thresholds and the corresponding platform responses.
 These checks are performed based on telemetry collected from the running application.
 
-| Layer | Metric / Signal (What we collect) | Threshold (What Bad looks like) | Problem | Platform Response (What we alert/act on) | Evidence Retention (What we keep for evidence) |
+| Observability Stack | Metric / Signal (What we collect) | Threshold (What Bad looks like) | Problem | Platform Response (What we alert/act on) | Evidence Retention (What we keep for evidence) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **L1** | CPU Utilization | `> 80%` | Resource Exhaustion (PQC Math Stress) | Alert | 5-min OS process snapshot + CPU metrics log |
 | **L1** | Memory Utilization | `> 80%` | Memory Leak / Buffer Overflow Risk | Alert | Heap memory allocation logs |
@@ -189,6 +190,7 @@ These checks are performed based on telemetry collected from the running applica
 | **L3** | Cipher Suite Compliance | Non-approved cipher suite detected | Policy Violation / Broken Cipher | Alert + Block traffic to the application | Cryptographic session log (Session ID & Cipher) |
 | **L3** | TLS Failure Rate per Client | Same source generates `> 100` TLS failures within 5 min | DoS/DDoS via PQC Exhaustion | Alert + Block the source | Source IP, TLS error codes, and Firewall drop log |
 | **L2/L3**| Request Rate per Client | Same source generates `> 100` requests within 1 min | Rate Limit Breach / Application DoS | Alert + Block the source | Source IP traffic volume logs + Blocked events |
+<br>
 
 # CI/CD Pipelines
 
@@ -231,11 +233,9 @@ EC2_KEY_PAIR_NAME=<existing-ec2-key-pair-name>
 
 # Future Improvements
 
-- Deploy the application on Kubernetes, enabling automated deployments, enhanced security controls, and GitOps workflows.
-- Integrate SAST and DAST security scanning for both the C++ and Python source code.
-- Replace the Python-based telemetry collector with a **Go implementation** to enable highly concurrent execution, improved performance, lower memory consumption, and a single portable executable with no external runtime dependencies.
-- Implement concurrent TLS validation to test hundreds or thousands of endpoints in parallel using Go's lightweight goroutines.
-- Develop a lightweight telemetry agent in Go for cross-platform deployment on Linux, Windows, and macOS.
+- Deploy the application on **Kubernetes** to enable automated deployments, isolated environments (using separate Pods and Namespaces) and enhanced security controls
+- Integrate **SAST and DAST security scanning** for both the C++ and Python source code.
+- Replace the Python telemetry collector with a **Go implementation** to leverage lightweight goroutines for concurrent, high-performance TLS validation across thousands of endpoints with lower memory usage and a single portable binary.
 <br><br>
 ## Author
 Taynan Mina Muniz - Information Security Specialist (MSc)
