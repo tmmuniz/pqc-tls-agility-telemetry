@@ -234,7 +234,7 @@ EC2_KEY_PAIR_NAME=<existing-ec2-key-pair-name>
 # Future Improvements
 
 - Deploy the application on **Kubernetes** to enable automated deployments, isolated environments (using separate Pods and Namespaces) and enhanced security controls
-- Integrate **SAST and DAST security scanning** for both the C++ and Python source code.
+- Implement **SAST and SCA** for C++ and Python source repositories, alongside **DAST** for runtime vulnerability scanning.
 - Replace the Python telemetry collector with a **Go implementation** to leverage lightweight goroutines for concurrent, high-performance TLS validation across thousands of endpoints with lower memory usage and a single portable binary.
 <br><br>
 ## Author
