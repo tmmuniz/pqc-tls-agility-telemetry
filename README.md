@@ -50,7 +50,7 @@ The Terraform code provisions the complete infrastructure, including:
 
 The Docker image starts **three independent service instances**, each exposing a different TLS configuration to demonstrate the **crypto-agility** concept.
 
-| Port | Configuration | Examples |
+| Port | Configuration | Examples of Algorithms |
 |------|---------------|----------|
 | **8443** | Classical Cryptography | X25519, rsa3072, ecdsa_p256 |
 | **8444** | Hybrid (Classical + Post-Quantum) | X25519MLKEM768, rsa3072_mldsa44, ecdsa_p256_slhdsa128 |
