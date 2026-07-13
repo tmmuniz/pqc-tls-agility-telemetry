@@ -50,11 +50,11 @@ The Terraform code provisions the complete infrastructure, including:
 
 The Docker image starts **three independent service instances**, each exposing a different TLS configuration to demonstrate the **crypto-agility** concept.
 
-| Port | Configuration |
-|------|---------------|
-| **8443** | Classical Cryptography |
-| **8444** | Hybrid (Classical + Post-Quantum) |
-| **8445** | Post-Quantum Cryptography (PQC) |
+| Port | Configuration | Examples |
+|------|---------------|----------|
+| **8443** | Classical Cryptography | X25519, rsa3072, ecdsa_p256 |
+| **8444** | Hybrid (Classical + Post-Quantum) | X25519MLKEM768, rsa3072_mldsa44, ecdsa_p256_slhdsa128 |
+| **8445** | Post-Quantum Cryptography (PQC) | MLKEM768, mldsa44, SLH-DSA-SHA2-256 |
 
 Although all three services execute the **same C++ application**, each instance uses a different `config.json` file to define its cryptographic configuration.
 
